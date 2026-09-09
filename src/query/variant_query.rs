@@ -20,20 +20,40 @@ impl VariantQuery {
 
     /// Finds a [`VariantRecord`] by its dbSNP rs identifier.
     pub fn find_by_id(&self, variant_id: &str) -> Result<VariantRecord> {
-        let _ = variant_id;
-        todo!("SELECT * FROM variant_records WHERE variant_id = ?1")
+        self.sql_store
+            .find_variant_by_id(variant_id)?
+            .ok_or_else(|| {
+                crate::BioDbError::NotFound(format!("variant with ID '{variant_id}' not found"))
+            })
     }
 
-    /// Returns all variants located within the half-open interval
-    /// `[start, end)` on chromosome `chr`.
-    pub fn find_by_region(&self, chr: &str, start: u64, end: u64) -> Result<Vec<VariantRecord>> {
-        let _ = (chr, start, end);
-        todo!("SELECT * FROM variant_records WHERE chr = ?1 AND position >= ?2 AND position < ?3")
+    /// Finds a [`VariantRecord`] by its dbSNP rs identifier scoped to an assembly.
+    pub fn find_by_id_scoped(&self, variant_id: &str, assembly: &str) -> Result<VariantRecord> {
+        self.sql_store
+            .find_variant_by_id_scoped(variant_id, assembly)?
+            .ok_or_else(|| {
+                crate::BioDbError::NotFound(format!(
+                    "variant with ID '{variant_id}' not found in assembly '{assembly}'"
+                ))
+            })
+    }
+
+    /// Returns all variants located within interval `[start, end)` on chromosome `chr`,
+    /// scoped to `tax_id` and `assembly`.
+    pub fn find_by_region(
+        &self,
+        tax_id: u32,
+        assembly: &str,
+        chr: &str,
+        start: u64,
+        end: u64,
+    ) -> Result<Vec<VariantRecord>> {
+        self.sql_store
+            .find_variants_by_region(tax_id, assembly, chr, start, end)
     }
 
     /// Returns all clinical variant interpretations for a given gene symbol.
     pub fn find_by_gene(&self, gene_symbol: &str) -> Result<Vec<ClinicalVariant>> {
-        let _ = gene_symbol;
-        todo!("SELECT * FROM clinical_variants WHERE gene_symbol = ?1")
+        self.sql_store.find_clinical_variants_by_gene(gene_symbol)
     }
 }

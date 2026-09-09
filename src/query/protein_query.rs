@@ -20,20 +20,23 @@ impl ProteinQuery {
 
     /// Finds a [`ProteinEntry`] by its primary UniProtKB accession.
     pub fn find_by_accession(&self, accession: &str) -> Result<ProteinEntry> {
-        let _ = accession;
-        todo!("SELECT * FROM protein_entries WHERE uniprot_accession = ?1")
+        self.sql_store
+            .find_protein_by_accession(accession)?
+            .ok_or_else(|| {
+                crate::BioDbError::NotFound(format!(
+                    "protein with accession '{accession}' not found"
+                ))
+            })
     }
 
     /// Returns all [`ProteinEntry`] records linked to a given gene symbol.
     pub fn find_by_gene(&self, gene_symbol: &str) -> Result<Vec<ProteinEntry>> {
-        let _ = gene_symbol;
-        todo!("SELECT * FROM protein_entries WHERE gene_symbol = ?1")
+        self.sql_store.find_proteins_by_gene(gene_symbol)
     }
 
     /// Returns all [`Domain`] records annotated on the protein with the given
     /// UniProtKB accession.
     pub fn domains_of(&self, accession: &str) -> Result<Vec<Domain>> {
-        let _ = accession;
-        todo!("SELECT * FROM protein_domains WHERE uniprot_accession = ?1")
+        self.sql_store.find_domains_by_accession(accession)
     }
 }

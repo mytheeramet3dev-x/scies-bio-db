@@ -68,7 +68,7 @@ impl FastaIngestor {
                     assembly_name: assembly.to_string(),
                     is_mitochondrial: is_mito,
                 };
-                let _ = store.insert_chromosome(&chrom);
+                store.insert_chromosome(&chrom)?;
             }
 
             ingested_chromosomes.push(chr_name);

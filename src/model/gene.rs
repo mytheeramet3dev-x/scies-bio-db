@@ -26,6 +26,8 @@ pub enum Biotype {
 pub struct Gene {
     /// Stable gene identifier (Ensembl ENSG… or HGNC ID).
     pub gene_id: String,
+    /// Reference genome assembly name (e.g. "GRCh38").
+    pub assembly_name: String,
     /// HGNC-approved gene symbol (e.g. "TP53").
     pub symbol: String,
     /// Full gene name.
@@ -64,6 +66,8 @@ pub struct Transcript {
     pub transcript_id: String,
     /// Parent gene identifier.
     pub gene_id: String,
+    /// Reference genome assembly name.
+    pub assembly_name: String,
     /// Biotype of this transcript.
     pub biotype: TranscriptBiotype,
     /// Chromosome / contig name.
@@ -85,6 +89,8 @@ pub struct Exon {
     pub exon_id: String,
     /// Parent transcript identifier.
     pub transcript_id: String,
+    /// Reference genome assembly name.
+    pub assembly_name: String,
     /// Chromosome / contig name.
     pub chr: String,
     /// 0-based start coordinate.

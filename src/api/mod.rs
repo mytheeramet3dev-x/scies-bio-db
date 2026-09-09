@@ -125,20 +125,20 @@ impl BioDb {
         ingestor.ingest_file(path, tax_id, assembly, Some(&self.sql_store))
     }
 
-    /// Ingests a GFF3 annotation file into the metadata store.
+    /// Ingests a GFF3 annotation file into the metadata store under `(tax_id, assembly)`.
     ///
     /// Returns the number of features ingested.
-    pub fn ingest_gff3(&self, path: &Path) -> Result<u64> {
+    pub fn ingest_gff3(&self, path: &Path, tax_id: u32, assembly: &str) -> Result<u64> {
         let ingestor = Gff3Ingestor::new();
-        ingestor.ingest_file(path, &self.sql_store)
+        ingestor.ingest_file(path, tax_id, assembly, &self.sql_store)
     }
 
-    /// Ingests a VCF variant file into the metadata store.
+    /// Ingests a VCF variant file into the metadata store under `(tax_id, assembly)`.
     ///
     /// Returns the number of variants ingested.
-    pub fn ingest_vcf(&self, path: &Path) -> Result<u64> {
+    pub fn ingest_vcf(&self, path: &Path, tax_id: u32, assembly: &str) -> Result<u64> {
         let ingestor = VcfIngestor::new();
-        ingestor.ingest_file(path, &self.sql_store)
+        ingestor.ingest_file(path, tax_id, assembly, &self.sql_store)
     }
 }
 
@@ -243,5 +243,91 @@ mod tests {
         assert_eq!(human_chrs.len(), 1);
         assert_eq!(human_chrs[0].name, "chr1");
         assert_eq!(human_chrs[0].length, 12);
+
+        // 6. Test Multi-Species & Multi-Assembly Scoped Gene Queries
+        let human_gene = crate::model::gene::Gene {
+            gene_id: "ENSG00000141510".to_string(),
+            assembly_name: "GRCh38".to_string(),
+            symbol: "TP53".to_string(),
+            name: "tumor protein p53".to_string(),
+            biotype: crate::model::gene::Biotype::ProteinCoding,
+            chr: "chr17".to_string(),
+            start: 7668401,
+            end: 7687550,
+            strand: crate::model::genome::Strand::Reverse,
+            tax_id: 9606,
+        };
+        db.sql_store().insert_gene(&human_gene).unwrap();
+
+        let mouse_gene = crate::model::gene::Gene {
+            gene_id: "ENSMUSG00000059552".to_string(),
+            assembly_name: "GRCm39".to_string(),
+            symbol: "Trp53".to_string(),
+            name: "transformation related protein 53".to_string(),
+            biotype: crate::model::gene::Biotype::ProteinCoding,
+            chr: "chr11".to_string(),
+            start: 69482126,
+            end: 69494399,
+            strand: crate::model::genome::Strand::Reverse,
+            tax_id: 10090,
+        };
+        db.sql_store().insert_gene(&mouse_gene).unwrap();
+
+        // Cross-species isolation test with identical symbol
+        let human_shared = crate::model::gene::Gene {
+            gene_id: "ENSG_SHARED".to_string(),
+            assembly_name: "GRCh38".to_string(),
+            symbol: "SHARED_GENE".to_string(),
+            name: "shared gene human".to_string(),
+            biotype: crate::model::gene::Biotype::ProteinCoding,
+            chr: "chr1".to_string(),
+            start: 100,
+            end: 500,
+            strand: crate::model::genome::Strand::Forward,
+            tax_id: 9606,
+        };
+        let mouse_shared = crate::model::gene::Gene {
+            gene_id: "ENSMUS_SHARED".to_string(),
+            assembly_name: "GRCm39".to_string(),
+            symbol: "SHARED_GENE".to_string(),
+            name: "shared gene mouse".to_string(),
+            biotype: crate::model::gene::Biotype::ProteinCoding,
+            chr: "chr1".to_string(),
+            start: 100,
+            end: 500,
+            strand: crate::model::genome::Strand::Forward,
+            tax_id: 10090,
+        };
+        db.sql_store().insert_gene(&human_shared).unwrap();
+        db.sql_store().insert_gene(&mouse_shared).unwrap();
+
+        let fetched_h = db
+            .genes()
+            .find_by_symbol_scoped(9606, "SHARED_GENE")
+            .unwrap();
+        assert_eq!(fetched_h.gene_id, "ENSG_SHARED");
+        assert_eq!(fetched_h.assembly_name, "GRCh38");
+
+        let fetched_m = db
+            .genes()
+            .find_by_symbol_scoped(10090, "SHARED_GENE")
+            .unwrap();
+        assert_eq!(fetched_m.gene_id, "ENSMUS_SHARED");
+        assert_eq!(fetched_m.assembly_name, "GRCm39");
+
+        // Region isolation check
+        let h_region = db
+            .genes()
+            .find_by_region(9606, "GRCh38", "chr1", 50, 600)
+            .unwrap();
+        assert_eq!(h_region.len(), 1);
+        assert_eq!(h_region[0].gene_id, "ENSG_SHARED");
+
+        let m_region = db
+            .genes()
+            .find_by_region(10090, "GRCm39", "chr1", 50, 600)
+            .unwrap();
+        assert_eq!(m_region.len(), 1);
+        assert_eq!(m_region[0].gene_id, "ENSMUS_SHARED");
     }
 }

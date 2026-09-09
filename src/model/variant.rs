@@ -41,6 +41,8 @@ pub enum ClinicalSignificance {
 pub struct VariantRecord {
     /// dbSNP rs identifier (e.g. "rs1042522").
     pub variant_id: String,
+    /// Reference genome assembly name (e.g. "GRCh38").
+    pub assembly_name: String,
     /// Chromosome / contig name.
     pub chr: String,
     /// 1-based position on the chromosome.

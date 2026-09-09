@@ -56,30 +56,77 @@ Queries the SQLite catalog for all registered chromosomes belonging to the assem
 
 Accessed via `let query = db.genes();`.
 
-#### `pub fn find_by_symbol(&self, symbol: &str) -> Result<Option<Gene>>`
-Searches the `genes` table by official gene symbol (e.g. `"INS"`, `"TP53"`).
+#### `pub fn find_by_symbol(&self, symbol: &str) -> Result<Gene>`
+Searches the `genes` table by official gene symbol across all registered organisms (e.g. `"INS"`, `"TP53"`).
 
-#### `pub fn find_by_id(&self, gene_id: &str) -> Result<Option<Gene>>`
-Searches by Ensembl or HGNC gene identifier (e.g. `"ENSG00000254647"`).
+#### `pub fn find_by_symbol_scoped(&self, tax_id: u32, symbol: &str) -> Result<Gene>`
+Finds a gene by taxonomy ID and symbol, strictly isolating species lookups (e.g. `9606` for Human, `10090` for Mouse).
 
-#### `pub fn find_by_region(&self, chr: &str, start: u64, end: u64) -> Result<Vec<Gene>>`
-Finds all genes whose genomic span overlaps the coordinate range `[start, end)`.
+#### `pub fn find_by_id(&self, gene_id: &str) -> Result<Gene>`
+Searches by Ensembl or HGNC gene identifier (e.g. `"ENSG00000141510"`).
+
+#### `pub fn find_by_id_scoped(&self, gene_id: &str, assembly: &str) -> Result<Gene>`
+Searches by gene identifier strictly scoped to a target reference genome assembly.
+
+#### `pub fn find_by_region(&self, tax_id: u32, assembly: &str, chr: &str, start: u64, end: u64) -> Result<Vec<Gene>>`
+Finds all genes whose genomic span overlaps the 0-based half-open range `[start, end)` scoped to `(tax_id, assembly)`.
+
+#### `pub fn transcripts_of(&self, gene_id: &str) -> Result<Vec<Transcript>>`
+Finds all transcripts associated with a given gene identifier.
+
+---
+
+### C. Protein Queries: `db.proteins()`
+
+Accessed via `let query = db.proteins();`.
+
+#### `pub fn find_by_accession(&self, accession: &str) -> Result<ProteinEntry>`
+Retrieves a protein record by primary UniProtKB accession (e.g. `"P04637"`).
+
+#### `pub fn find_by_gene(&self, gene_symbol: &str) -> Result<Vec<ProteinEntry>>`
+Retrieves all protein records matching a given gene symbol.
+
+#### `pub fn domains_of(&self, accession: &str) -> Result<Vec<Domain>>`
+Retrieves protein domain annotations (Pfam, InterPro) for a protein entry.
+
+---
+
+### D. Variant Queries: `db.variants()`
+
+Accessed via `let query = db.variants();`.
+
+#### `pub fn find_by_id(&self, variant_id: &str) -> Result<VariantRecord>`
+Retrieves a variant record by dbSNP rsID (e.g. `"rs1042522"`).
+
+#### `pub fn find_by_region(&self, tax_id: u32, assembly: &str, chr: &str, start: u64, end: u64) -> Result<Vec<VariantRecord>>`
+Retrieves all variants located within coordinate range `[start, end)` scoped to `(tax_id, assembly)`.
+
+#### `pub fn find_by_gene(&self, gene_symbol: &str) -> Result<Vec<ClinicalVariant>>`
+Retrieves ClinVar clinical interpretations for a given gene.
 
 ---
 
 ## 3. Ingestion Pipelines
 
-### A. FASTA Ingestion (`FastaIngestor`)
-Streams raw FASTA files and writes 2-bit `.seq` files partitioned by header chromosome names:
-```rust
-use scies_bio_db::ingest::FastaIngestor;
+All ingestion pipelines are atomic and require explicit taxonomy and assembly scoping:
 
-let ingestor = FastaIngestor::new(db.seq_store_handle());
-let chromosomes_ingested = ingestor.ingest_file(Path::new("hg38.fa"), 9606, "GRCh38")?;
+### A. FASTA Ingestion (`FastaIngestor`)
+Streams raw FASTA files, losslessly encodes 2-bit `.seq v2` files, and updates chromosome tables:
+```rust
+let chromosomes_ingested = db.ingest_fasta(Path::new("hg38.fa"), 9606, "GRCh38")?;
 ```
 
 ### B. GFF3 Annotation Ingestion (`Gff3Ingestor`)
-Parses GFF3 features and populates genes, transcripts, and exon tables with validated parent-child relationships.
+Parses GFF3 features and populates genes, transcripts, and exon tables with validated parent-child relationships:
+```rust
+let features_ingested = db.ingest_gff3(Path::new("annotations.gff3"), 9606, "GRCh38")?;
+```
+
+### C. VCF Variant Ingestion (`VcfIngestor`)
+Streams VCF files and loads variant records into the catalog:
+```rust
+let variants_ingested = db.ingest_vcf(Path::new("variants.vcf"), 9606, "GRCh38")?;
+```
 
 ---
 
@@ -119,5 +166,9 @@ pub enum BioDbError {
     Encoding(String),
     NotFound(String),
     InvalidCoordinate { chr: String, start: u64, end: u64 },
+    CorruptData(String),
+    ChecksumMismatch { expected: u32, found: u32 },
+    UnsupportedVersion(u16),
+    PathTraversal(String),
 }
 ```
