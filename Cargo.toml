@@ -1,0 +1,24 @@
+[package]
+name = "scies-bio-db"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A biological database engine for all living organisms, starting from humans."
+repository = "https://github.com/mytheeramet3dev-x/scies-bio-db"
+keywords = ["bioinformatics", "biology", "database", "genomics", "proteomics"]
+categories = ["science", "database-implementations"]
+
+[dependencies]
+scies-bio-th = { path = "../scies-bio-th", version = "0.1" }
+rusqlite = { version = "0.32", features = ["bundled"] }
+memmap2 = "0.9"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[features]
+default = []
+ingest = []
+parallel = []
+
+[dev-dependencies]
+tempfile = "3"

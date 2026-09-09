@@ -1,0 +1,7 @@
+/target
+.DS_Store
+*.db
+*.seq
+*.fai
+/data/
+/demo_biodb/
