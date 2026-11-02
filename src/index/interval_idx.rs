@@ -54,31 +54,24 @@ impl IntervalIndex {
     ///
     /// # Panics
     ///
-    /// Does not panic; returns an empty slice when no entries overlap.
+    /// Does not panic; returns an empty vector when no entries overlap.
     pub fn find_overlapping(&self, chr: &str, start: u64, end: u64) -> Vec<&IndexEntry> {
-        // Binary-search to the first entry with this chromosome.
-        let first = self.entries.partition_point(|e| {
-            e.chr.as_str() < chr || (e.chr.as_str() == chr && e.start < start)
-        });
-
+        // Binary search to find the first entry belonging to `chr`
+        let chr_start = self.entries.partition_point(|e| e.chr.as_str() < chr);
         let mut result = Vec::new();
-        // Walk backward to catch entries whose start < query start but end > query start.
-        let scan = first.saturating_sub(1);
-        // Also scan all entries on the same chromosome beginning before `end`.
-        // For simplicity (and correctness for moderate dataset sizes) we do a
-        // linear scan over all entries on `chr` that could overlap.
-        // A production implementation would use an augmented interval tree or
-        // segment tree for O(log n + k) performance.
-        for entry in &self.entries {
+
+        for entry in &self.entries[chr_start..] {
             if entry.chr.as_str() != chr {
-                continue;
+                break; // Reached next chromosome in sorted list
             }
-            // Overlap condition: entry.start < end AND entry.end > start
-            if entry.start < end && entry.end > start {
+            if entry.start >= end {
+                break; // Sorted by start: all subsequent entries start at or after query end
+            }
+            // Overlap condition: entry.start < end (checked above) AND entry.end > start
+            if entry.end > start {
                 result.push(entry);
             }
         }
-        let _ = scan; // suppress unused-variable warning
         result
     }
 }
@@ -86,5 +79,60 @@ impl IntervalIndex {
 impl Default for IntervalIndex {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_interval_index_overlapping() {
+        let mut index = IntervalIndex::new();
+        index.insert(IndexEntry {
+            chr: "chr1".to_string(),
+            start: 100,
+            end: 200,
+            payload_id: "gene1".to_string(),
+        });
+        index.insert(IndexEntry {
+            chr: "chr1".to_string(),
+            start: 150,
+            end: 250,
+            payload_id: "gene2".to_string(),
+        });
+        index.insert(IndexEntry {
+            chr: "chr1".to_string(),
+            start: 300,
+            end: 400,
+            payload_id: "gene3".to_string(),
+        });
+        index.insert(IndexEntry {
+            chr: "chr2".to_string(),
+            start: 100,
+            end: 200,
+            payload_id: "gene4".to_string(),
+        });
+
+        index.build();
+
+        // Overlaps gene1 and gene2
+        let hits = index.find_overlapping("chr1", 120, 160);
+        let ids: Vec<&str> = hits.iter().map(|e| e.payload_id.as_str()).collect();
+        assert_eq!(ids, vec!["gene1", "gene2"]);
+
+        // Isolated hit for gene3
+        let hits3 = index.find_overlapping("chr1", 350, 450);
+        assert_eq!(hits3.len(), 1);
+        assert_eq!(hits3[0].payload_id, "gene3");
+
+        // Chr2 isolation
+        let hits_chr2 = index.find_overlapping("chr2", 50, 150);
+        assert_eq!(hits_chr2.len(), 1);
+        assert_eq!(hits_chr2[0].payload_id, "gene4");
+
+        // No overlap
+        let misses = index.find_overlapping("chr1", 500, 600);
+        assert!(misses.is_empty());
     }
 }

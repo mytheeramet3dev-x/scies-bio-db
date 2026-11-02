@@ -38,6 +38,8 @@ impl VcfIngestor {
         let vcf_reader = VcfReader::new(reader);
 
         let mut count = 0u64;
+        const BATCH_SIZE: usize = 5000;
+        let mut batch = Vec::with_capacity(BATCH_SIZE);
 
         for item in vcf_reader {
             let record = item?;
@@ -74,8 +76,17 @@ impl VcfIngestor {
                 tax_id,
             };
 
-            store.insert_variant_record(&var_record)?;
-            count += 1;
+            batch.push(var_record);
+            if batch.len() >= BATCH_SIZE {
+                store.insert_variants_batch(&batch)?;
+                count += batch.len() as u64;
+                batch.clear();
+            }
+        }
+
+        if !batch.is_empty() {
+            store.insert_variants_batch(&batch)?;
+            count += batch.len() as u64;
         }
 
         Ok(count)

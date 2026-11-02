@@ -62,3 +62,26 @@ impl KmerIndex {
         h
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kmer_index() {
+        let mut index = KmerIndex::new(4);
+        let seq = b"ACGTACGT";
+        index.index_sequence("chr1", seq);
+
+        let hits = index.lookup(b"ACGT").unwrap();
+        assert_eq!(hits.len(), 2);
+        assert_eq!(hits[0], ("chr1".to_string(), 0));
+        assert_eq!(hits[1], ("chr1".to_string(), 4));
+
+        let hits_cgt = index.lookup(b"CGTA").unwrap();
+        assert_eq!(hits_cgt.len(), 1);
+        assert_eq!(hits_cgt[0], ("chr1".to_string(), 1));
+
+        assert!(index.lookup(b"TTTT").is_none());
+    }
+}

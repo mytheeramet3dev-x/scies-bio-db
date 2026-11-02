@@ -24,7 +24,7 @@ To achieve maximum performance with minimal disk footprint, `scies-bio-db` uses 
      ▼                             ▼                     ▼                             ▼
 [.seq Files]                [Zero-Copy Mmap]       [meta.db Tables]            [Relational Indices]
 - 4 bases / byte            - Direct virtual       - organisms                 - gene symbol index
-- 8-byte LE header            address translation  - chromosomes               - interval ranges
+- 64-byte aligned header      address translation  - chromosomes               - interval ranges
 - Partitioned by TaxID      - OS page caching      - genes & transcripts       - UniProt accession
 ```
 

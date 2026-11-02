@@ -209,28 +209,27 @@ impl Gff3Ingestor {
             }
         }
 
-        // Update transcript exon counts
+        // Fast O(E + T) aggregation of exon counts per transcript
+        let mut exon_counts: HashMap<&str, u32> = HashMap::with_capacity(transcripts.len());
+        for exon in &exons {
+            *exon_counts.entry(exon.transcript_id.as_str()).or_insert(0) += 1;
+        }
         for t in &mut transcripts {
-            let count = exons
-                .iter()
-                .filter(|e| e.transcript_id == t.transcript_id)
-                .count() as u32;
-            t.exon_count = if count > 0 { count } else { 1 };
+            t.exon_count = exon_counts
+                .get(t.transcript_id.as_str())
+                .copied()
+                .unwrap_or(1);
         }
 
-        // Insert into database
-        for gene in &genes {
-            store.insert_gene(gene)?;
-            inserted_count += 1;
-        }
-        for transcript in &transcripts {
-            store.insert_transcript(transcript)?;
-            inserted_count += 1;
-        }
-        for exon in &exons {
-            store.insert_exon(exon)?;
-            inserted_count += 1;
-        }
+        // Batch insert into database within atomic transactions for maximum performance
+        inserted_count += genes.len() as u64;
+        store.insert_genes_batch(&genes)?;
+
+        inserted_count += transcripts.len() as u64;
+        store.insert_transcripts_batch(&transcripts)?;
+
+        inserted_count += exons.len() as u64;
+        store.insert_exons_batch(&exons)?;
 
         Ok(inserted_count)
     }

@@ -42,3 +42,20 @@ impl Default for KvStore {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kv_store() {
+        let mut store = KvStore::new();
+        store.set("key1".to_string(), b"val1".to_vec());
+        assert_eq!(store.get("key1"), Some(b"val1".as_slice()));
+        assert_eq!(store.get("key2"), None);
+
+        let removed = store.remove("key1");
+        assert_eq!(removed, Some(b"val1".to_vec()));
+        assert_eq!(store.get("key1"), None);
+    }
+}

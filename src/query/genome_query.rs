@@ -37,6 +37,20 @@ impl GenomeQuery {
         scies_bio_th::Dna::new(&raw_bytes).map_err(BioDbError::Bio)
     }
 
+    /// Fetches raw sequence bytes for `chr` over the half-open interval `[start, end)`.
+    ///
+    /// Preserves full IUPAC degenerate symbols and Uracil without converting to [`scies_bio_th::Dna`].
+    pub fn fetch_raw_sequence(
+        &self,
+        tax_id: u32,
+        assembly: &str,
+        chr: &str,
+        start: u64,
+        end: u64,
+    ) -> Result<Vec<u8>> {
+        self.seq_store.fetch(tax_id, assembly, chr, start, end)
+    }
+
     /// Fetches the full DNA sequence for `chr` and returns it as a [`scies_bio_th::Dna`] value.
     pub fn fetch_full_sequence(
         &self,
@@ -46,6 +60,17 @@ impl GenomeQuery {
     ) -> Result<scies_bio_th::Dna> {
         let len = self.seq_store.sequence_length(tax_id, assembly, chr)?;
         self.fetch_sequence(tax_id, assembly, chr, 0, len)
+    }
+
+    /// Fetches the complete raw sequence bytes for `chr`.
+    pub fn fetch_full_raw_sequence(
+        &self,
+        tax_id: u32,
+        assembly: &str,
+        chr: &str,
+    ) -> Result<Vec<u8>> {
+        let len = self.seq_store.sequence_length(tax_id, assembly, chr)?;
+        self.fetch_raw_sequence(tax_id, assembly, chr, 0, len)
     }
 
     /// Returns metadata for every chromosome in assembly `assembly`.

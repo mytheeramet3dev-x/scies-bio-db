@@ -403,6 +403,59 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Inserts a slice of [`Gene`] records within a single atomic SQLite transaction.
+    pub fn insert_genes_batch(&self, genes: &[Gene]) -> Result<()> {
+        if genes.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO genes (gene_id, assembly_name, symbol, name, biotype, chr, start, end, strand, tax_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ON CONFLICT (gene_id, assembly_name) DO UPDATE SET
+                    symbol = excluded.symbol,
+                    name = excluded.name,
+                    biotype = excluded.biotype,
+                    chr = excluded.chr,
+                    start = excluded.start,
+                    end = excluded.end,
+                    strand = excluded.strand,
+                    tax_id = excluded.tax_id",
+            )?;
+            for gene in genes {
+                let biotype_str = match &gene.biotype {
+                    Biotype::ProteinCoding => "protein_coding",
+                    Biotype::LongNonCodingRna => "lncRNA",
+                    Biotype::MicroRna => "miRNA",
+                    Biotype::SmallNuclearRna => "snRNA",
+                    Biotype::Pseudogene => "pseudogene",
+                    Biotype::RibosomalRna => "rRNA",
+                    Biotype::Other(s) => s.as_str(),
+                };
+                let strand_str = match gene.strand {
+                    Strand::Forward => "+",
+                    Strand::Reverse => "-",
+                };
+                stmt.execute(params![
+                    gene.gene_id,
+                    gene.assembly_name,
+                    gene.symbol,
+                    gene.name,
+                    biotype_str,
+                    gene.chr,
+                    gene.start,
+                    gene.end,
+                    strand_str,
+                    gene.tax_id
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Finds a gene by tax_id and HGNC symbol (species-isolated).
     pub fn find_gene_by_symbol(&self, tax_id: u32, symbol: &str) -> Result<Option<Gene>> {
         let conn = self.conn.lock().unwrap();
@@ -569,6 +622,54 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Inserts a slice of [`Transcript`] records within a single atomic SQLite transaction.
+    pub fn insert_transcripts_batch(&self, transcripts: &[Transcript]) -> Result<()> {
+        if transcripts.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO transcripts (transcript_id, gene_id, assembly_name, biotype, chr, start, end, strand, exon_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT (transcript_id, assembly_name) DO UPDATE SET
+                    gene_id = excluded.gene_id,
+                    biotype = excluded.biotype,
+                    chr = excluded.chr,
+                    start = excluded.start,
+                    end = excluded.end,
+                    strand = excluded.strand,
+                    exon_count = excluded.exon_count",
+            )?;
+            for transcript in transcripts {
+                let biotype_str = match &transcript.biotype {
+                    TranscriptBiotype::MRNA => "mRNA",
+                    TranscriptBiotype::NCRNA => "ncRNA",
+                    TranscriptBiotype::Pseudogene => "pseudogene",
+                    TranscriptBiotype::Other(s) => s.as_str(),
+                };
+                let strand_str = match transcript.strand {
+                    Strand::Forward => "+",
+                    Strand::Reverse => "-",
+                };
+                stmt.execute(params![
+                    transcript.transcript_id,
+                    transcript.gene_id,
+                    transcript.assembly_name,
+                    biotype_str,
+                    transcript.chr,
+                    transcript.start,
+                    transcript.end,
+                    strand_str,
+                    transcript.exon_count
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn insert_exon(&self, exon: &Exon) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let strand_str = match exon.strand {
@@ -595,6 +696,45 @@ impl SqliteStore {
                 exon.exon_number,
             ],
         )?;
+        Ok(())
+    }
+
+    /// Inserts a slice of [`Exon`] records within a single atomic SQLite transaction.
+    pub fn insert_exons_batch(&self, exons: &[Exon]) -> Result<()> {
+        if exons.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO exons (exon_id, transcript_id, assembly_name, chr, start, end, strand, exon_number)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT (exon_id, transcript_id, assembly_name) DO UPDATE SET
+                    chr = excluded.chr,
+                    start = excluded.start,
+                    end = excluded.end,
+                    strand = excluded.strand,
+                    exon_number = excluded.exon_number",
+            )?;
+            for exon in exons {
+                let strand_str = match exon.strand {
+                    Strand::Forward => "+",
+                    Strand::Reverse => "-",
+                };
+                stmt.execute(params![
+                    exon.exon_id,
+                    exon.transcript_id,
+                    exon.assembly_name,
+                    exon.chr,
+                    exon.start,
+                    exon.end,
+                    strand_str,
+                    exon.exon_number
+                ])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -813,6 +953,49 @@ impl SqliteStore {
                 variant.tax_id,
             ],
         )?;
+        Ok(())
+    }
+
+    /// Inserts a slice of [`VariantRecord`] records within a single atomic SQLite transaction.
+    pub fn insert_variants_batch(&self, variants: &[VariantRecord]) -> Result<()> {
+        if variants.is_empty() {
+            return Ok(());
+        }
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO variant_records (variant_id, assembly_name, chr, position, reference, alternate, variant_type, tax_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT (variant_id, assembly_name) DO UPDATE SET
+                    chr = excluded.chr,
+                    position = excluded.position,
+                    reference = excluded.reference,
+                    alternate = excluded.alternate,
+                    variant_type = excluded.variant_type,
+                    tax_id = excluded.tax_id",
+            )?;
+            for variant in variants {
+                let type_str = match variant.variant_type {
+                    VariantType::Snp => "SNP",
+                    VariantType::Insertion => "Insertion",
+                    VariantType::Deletion => "Deletion",
+                    VariantType::Mnp => "MNP",
+                    VariantType::StructuralVariant => "SV",
+                };
+                stmt.execute(params![
+                    variant.variant_id,
+                    variant.assembly_name,
+                    variant.chr,
+                    variant.position,
+                    variant.reference,
+                    variant.alternate,
+                    type_str,
+                    variant.tax_id
+                ])?;
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 

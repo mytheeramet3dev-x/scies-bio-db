@@ -74,6 +74,20 @@ impl BioDb {
         self.seq_store.store(tax_id, assembly, chr, sequence)
     }
 
+    /// Fetches a decoded sequence slice directly under `(tax_id, assembly, chr)` over half-open interval `[start, end)`.
+    ///
+    /// Preserves all IUPAC degenerate symbols and Uracil losslessly via `.seq v2`.
+    pub fn fetch_sequence(
+        &self,
+        tax_id: u32,
+        assembly: &str,
+        chr: &str,
+        start: u64,
+        end: u64,
+    ) -> Result<Vec<u8>> {
+        self.seq_store.fetch(tax_id, assembly, chr, start, end)
+    }
+
     /// Registers or updates an organism in the database.
     pub fn register_organism(&self, organism: &Organism) -> Result<()> {
         self.sql_store.insert_organism(organism)
@@ -329,5 +343,18 @@ mod tests {
             .unwrap();
         assert_eq!(m_region.len(), 1);
         assert_eq!(m_region[0].gene_id, "ENSMUS_SHARED");
+
+        // 7. Verify direct BioDb::fetch_sequence and IUPAC/RNA raw fetch
+        let direct_slice = db.fetch_sequence(9606, "GRCh38", "chr1", 0, 4).unwrap();
+        assert_eq!(&direct_slice, b"ATGC");
+
+        let iupac_seq = b"ACGTUNRYSWKMBDHV";
+        db.store_sequence(9606, "GRCh38", "chr_iupac", iupac_seq)
+            .unwrap();
+        let raw_fetched = db
+            .genome()
+            .fetch_raw_sequence(9606, "GRCh38", "chr_iupac", 0, iupac_seq.len() as u64)
+            .unwrap();
+        assert_eq!(&raw_fetched, iupac_seq);
     }
 }

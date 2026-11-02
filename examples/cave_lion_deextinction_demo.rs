@@ -177,10 +177,12 @@ fn main() -> scies_bio_db::Result<()> {
     let mut embryo =
         SyntheticEmbryo::from_scnt(scnt_zygote).map_err(scies_bio_db::BioDbError::Bio)?;
 
-    let mut pre_implantation_env = EmbryoCultureEnvironment::default();
-    pre_implantation_env.oxygen_percent = 5.0; // 5% Low O2
-    pre_implantation_env.microfluidic_flow = true;
-    pre_implantation_env.sequential_media_optimized = true;
+    let pre_implantation_env = EmbryoCultureEnvironment {
+        oxygen_percent: 5.0, // 5% Low O2
+        microfluidic_flow: true,
+        sequential_media_optimized: true,
+        ..Default::default()
+    };
 
     // Day 1: 2-Cell stage (EGA)
     embryo
