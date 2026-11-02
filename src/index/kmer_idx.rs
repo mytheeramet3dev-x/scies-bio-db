@@ -3,7 +3,18 @@
 //! Each k-mer is mapped to a list of `(chromosome, position)` pairs so that
 //! a query k-mer can be located in O(1) expected time.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+
+/// A located match of a k-mer sequence hit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KmerHit {
+    /// Chromosome name where hit occurs.
+    pub chr: String,
+    /// 0-based start coordinate.
+    pub position: u64,
+    /// Count of shared k-mers in the matching window.
+    pub hit_count: usize,
+}
 
 /// K-mer hash index.
 ///
@@ -50,6 +61,85 @@ impl KmerIndex {
         self.table.get(&h)
     }
 
+    /// Computes the Jaccard similarity coefficient between the indexed k-mers and `query_sequence`:
+    /// $$J(A, B) = \frac{|A \cap B|}{|A \cup B|}$$
+    ///
+    /// Returns a float in `[0.0, 1.0]`. Returns `0.0` if either set is empty.
+    pub fn jaccard_similarity(&self, query_sequence: &[u8]) -> f64 {
+        if query_sequence.len() < self.k || self.table.is_empty() {
+            return 0.0;
+        }
+
+        let mut query_set = HashSet::new();
+        for i in 0..=(query_sequence.len() - self.k) {
+            let kmer = &query_sequence[i..i + self.k];
+            query_set.insert(Self::hash_kmer(kmer));
+        }
+
+        let mut intersection = 0usize;
+        for h in &query_set {
+            if self.table.contains_key(h) {
+                intersection += 1;
+            }
+        }
+
+        let union = self.table.len() + query_set.len() - intersection;
+        if union == 0 {
+            0.0
+        } else {
+            intersection as f64 / union as f64
+        }
+    }
+
+    /// Counts how many k-mers in `query_sequence` match at least once in the index.
+    pub fn count_shared_kmers(&self, query_sequence: &[u8]) -> usize {
+        if query_sequence.len() < self.k {
+            return 0;
+        }
+        let mut count = 0;
+        for i in 0..=(query_sequence.len() - self.k) {
+            let kmer = &query_sequence[i..i + self.k];
+            let h = Self::hash_kmer(kmer);
+            if self.table.contains_key(&h) {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// Locates genomic regions with the highest density of matching k-mers.
+    pub fn find_matches(&self, query_sequence: &[u8], min_hits: usize) -> Vec<KmerHit> {
+        if query_sequence.len() < self.k {
+            return Vec::new();
+        }
+
+        let mut hit_counts: HashMap<(String, u64), usize> = HashMap::new();
+        for i in 0..=(query_sequence.len() - self.k) {
+            let kmer = &query_sequence[i..i + self.k];
+            let h = Self::hash_kmer(kmer);
+            if let Some(positions) = self.table.get(&h) {
+                for (chr, pos) in positions {
+                    // Cluster by rough 100bp windows to identify candidate homologous blocks
+                    let window = pos / 100 * 100;
+                    *hit_counts.entry((chr.clone(), window)).or_insert(0) += 1;
+                }
+            }
+        }
+
+        let mut matches: Vec<KmerHit> = hit_counts
+            .into_iter()
+            .filter(|(_, count)| *count >= min_hits)
+            .map(|((chr, position), hit_count)| KmerHit {
+                chr,
+                position,
+                hit_count,
+            })
+            .collect();
+
+        matches.sort_by_key(|a| std::cmp::Reverse(a.hit_count));
+        matches
+    }
+
     /// Computes a simple polynomial rolling hash for `kmer`.
     ///
     /// Uses base 131 and modulus 2^64 (wrapping arithmetic).
@@ -83,5 +173,16 @@ mod tests {
         assert_eq!(hits_cgt[0], ("chr1".to_string(), 1));
 
         assert!(index.lookup(b"TTTT").is_none());
+
+        // Test similarity
+        let identical_score = index.jaccard_similarity(b"ACGTACGT");
+        assert!((identical_score - 1.0).abs() < 1e-6);
+
+        let shared_count = index.count_shared_kmers(b"ACGTGGGG");
+        assert_eq!(shared_count, 1); // only ACGT matches
+
+        let matches = index.find_matches(b"ACGTACGT", 1);
+        assert!(!matches.is_empty());
+        assert_eq!(matches[0].chr, "chr1");
     }
 }

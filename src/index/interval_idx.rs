@@ -4,6 +4,8 @@
 //! Overlap queries perform a binary-search gallop followed by a linear scan over
 //! the matching chromosome window.
 
+use crate::model::gene::{Gene, Transcript};
+
 /// A single indexed interval record associating a genomic coordinate range with
 /// an entity identifier.
 #[derive(Debug, Clone)]
@@ -47,6 +49,50 @@ impl IntervalIndex {
     pub fn build(&mut self) {
         self.entries
             .sort_unstable_by(|a, b| a.chr.cmp(&b.chr).then(a.start.cmp(&b.start)));
+    }
+
+    /// Returns the number of entries in the index.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns `true` if the index contains no entries.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Builds a sorted [`IntervalIndex`] from a slice of [`Gene`] records.
+    pub fn from_genes(genes: &[Gene]) -> Self {
+        let mut index = Self {
+            entries: genes
+                .iter()
+                .map(|g| IndexEntry {
+                    chr: g.chr.clone(),
+                    start: g.start,
+                    end: g.end,
+                    payload_id: g.gene_id.clone(),
+                })
+                .collect(),
+        };
+        index.build();
+        index
+    }
+
+    /// Builds a sorted [`IntervalIndex`] from a slice of [`Transcript`] records.
+    pub fn from_transcripts(transcripts: &[Transcript]) -> Self {
+        let mut index = Self {
+            entries: transcripts
+                .iter()
+                .map(|t| IndexEntry {
+                    chr: t.chr.clone(),
+                    start: t.start,
+                    end: t.end,
+                    payload_id: t.transcript_id.clone(),
+                })
+                .collect(),
+        };
+        index.build();
+        index
     }
 
     /// Returns all entries whose interval `[entry.start, entry.end)` overlaps

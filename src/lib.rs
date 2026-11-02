@@ -24,3 +24,5 @@ pub mod storage;
 
 pub use api::BioDb;
 pub use error::{BioDbError, Result};
+pub use index::{IndexEntry, IntervalIndex, KmerHit, KmerIndex};
+pub use ingest::{BulkLoadReport, BulkLoader, GenomePackage};

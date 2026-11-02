@@ -6,7 +6,9 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::ingest::{FastaIngestor, Gff3Ingestor, VcfIngestor};
+use crate::ingest::{
+    BulkLoadReport, BulkLoader, FastaIngestor, GenomePackage, Gff3Ingestor, VcfIngestor,
+};
 use crate::model::taxonomy::Organism;
 use crate::query::{GeneQuery, GenomeQuery, ProteinQuery, VariantQuery};
 use crate::storage::{SeqStore, SqliteStore};
@@ -153,6 +155,15 @@ impl BioDb {
     pub fn ingest_vcf(&self, path: &Path, tax_id: u32, assembly: &str) -> Result<u64> {
         let ingestor = VcfIngestor::new();
         ingestor.ingest_file(path, tax_id, assembly, &self.sql_store)
+    }
+
+    /// Bulk-loads an entire NCBI or Ensembl [`GenomePackage`] into the database atomically.
+    ///
+    /// Ingests sequences into `.seq v2` format (leveraging multi-core parallelism when the `parallel` feature is active),
+    /// imports GFF3 features in transactions, records VCF variants, and returns a comprehensive [`BulkLoadReport`].
+    pub fn bulk_load_package(&self, package: &GenomePackage) -> Result<BulkLoadReport> {
+        let loader = BulkLoader::new(Arc::clone(&self.seq_store), Arc::clone(&self.sql_store));
+        loader.load(package)
     }
 }
 
@@ -356,5 +367,89 @@ mod tests {
             .fetch_raw_sequence(9606, "GRCh38", "chr_iupac", 0, iupac_seq.len() as u64)
             .unwrap();
         assert_eq!(&raw_fetched, iupac_seq);
+    }
+
+    #[test]
+    fn test_bulk_package_and_indices() {
+        let dir = tempdir().unwrap();
+        let db = BioDb::open(dir.path()).unwrap();
+
+        let ecoli = Organism {
+            tax_id: 562,
+            scientific_name: "Escherichia coli".to_string(),
+            common_name: Some("E. coli".to_string()),
+            lineage: Lineage {
+                domain: "Bacteria".into(),
+                kingdom: "Bacteria".into(),
+                phylum: "Pseudomonadota".into(),
+                class: "Gammaproteobacteria".into(),
+                order: "Enterobacterales".into(),
+                family: "Enterobacteriaceae".into(),
+                genus: "Escherichia".into(),
+                species: "coli".into(),
+            },
+        };
+        let genome = ReferenceGenome {
+            assembly_name: "ASM584v2".to_string(),
+            tax_id: 562,
+            status: crate::model::genome::AssemblyStatus::Primary,
+            release_year: 2014,
+        };
+
+        // Create sample fasta
+        let mut fa = NamedTempFile::new().unwrap();
+        writeln!(fa, ">chr1 E. coli genome").unwrap();
+        writeln!(
+            fa,
+            "ATGACCATGATTACGCCAAGCTTGCATGCCTGCAGGTCGACTCTAGAGGATCCCCGGGTACCGAGCTCGAATTC"
+        )
+        .unwrap();
+        fa.flush().unwrap();
+
+        // Create sample gff3
+        let mut gff = NamedTempFile::new().unwrap();
+        writeln!(gff, "##gff-version 3").unwrap();
+        writeln!(
+            gff,
+            "chr1\tRefSeq\tgene\t1\t30\t.\t+\t.\tID=gene:lacZ;Name=lacZ;biotype=protein_coding"
+        )
+        .unwrap();
+        writeln!(
+            gff,
+            "chr1\tRefSeq\tmRNA\t1\t30\t.\t+\t.\tID=transcript:lacZ_t1;Parent=gene:lacZ;biotype=mRNA"
+        )
+        .unwrap();
+        writeln!(
+            gff,
+            "chr1\tRefSeq\texon\t1\t30\t.\t+\t.\tID=exon:lacZ_e1;Parent=transcript:lacZ_t1;exon_number=1"
+        )
+        .unwrap();
+        gff.flush().unwrap();
+
+        let package = GenomePackage::new(ecoli, genome)
+            .add_fasta(fa.path())
+            .add_gff3(gff.path());
+
+        let report = db.bulk_load_package(&package).unwrap();
+        assert_eq!(report.chromosomes_ingested, 1);
+        assert!(report.total_bases_ingested > 50);
+        assert_eq!(report.features_ingested, 3);
+
+        // Verify Interval Index
+        let interval_idx = db
+            .genes()
+            .build_chromosome_interval_index(562, "ASM584v2", "chr1")
+            .unwrap();
+        assert_eq!(interval_idx.len(), 1);
+        let hits = interval_idx.find_overlapping("chr1", 5, 15);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].payload_id, "lacZ");
+
+        // Verify K-mer similarity
+        let sim = db
+            .genome()
+            .estimate_similarity(562, "ASM584v2", "chr1", b"ATGACCATGATTAC", 6)
+            .unwrap();
+        assert!(sim > 0.0);
     }
 }

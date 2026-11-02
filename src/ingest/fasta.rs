@@ -76,6 +76,56 @@ impl FastaIngestor {
 
         Ok(ingested_chromosomes)
     }
+
+    /// Ingests multiple FASTA files sequentially, or concurrently when the `parallel` feature is enabled.
+    ///
+    /// In parallel mode, Rayon is used to distribute encoding and disk I/O across CPU cores.
+    pub fn ingest_files<P: AsRef<Path> + Sync>(
+        &self,
+        paths: &[P],
+        tax_id: u32,
+        assembly: &str,
+        sql_store: Option<&SqliteStore>,
+    ) -> Result<Vec<String>> {
+        #[cfg(feature = "parallel")]
+        {
+            use rayon::prelude::*;
+            let results: Result<Vec<Vec<String>>> = paths
+                .par_iter()
+                .map(|p| self.ingest_file(p.as_ref(), tax_id, assembly, None))
+                .collect();
+            let all_chrs = results?.into_iter().flatten().collect::<Vec<_>>();
+
+            if let Some(store) = sql_store {
+                for chr_name in &all_chrs {
+                    if let Ok(seq_len) = self.seq_store.sequence_length(tax_id, assembly, chr_name)
+                    {
+                        let is_mito = chr_name.eq_ignore_ascii_case("chrM")
+                            || chr_name.eq_ignore_ascii_case("MT")
+                            || chr_name.eq_ignore_ascii_case("chrMT");
+                        let chrom = Chromosome {
+                            name: chr_name.clone(),
+                            length: seq_len,
+                            assembly_name: assembly.to_string(),
+                            is_mitochondrial: is_mito,
+                        };
+                        store.insert_chromosome(&chrom)?;
+                    }
+                }
+            }
+            Ok(all_chrs)
+        }
+
+        #[cfg(not(feature = "parallel"))]
+        {
+            let mut all_chrs = Vec::new();
+            for p in paths {
+                let chrs = self.ingest_file(p.as_ref(), tax_id, assembly, sql_store)?;
+                all_chrs.extend(chrs);
+            }
+            Ok(all_chrs)
+        }
+    }
 }
 
 #[cfg(test)]

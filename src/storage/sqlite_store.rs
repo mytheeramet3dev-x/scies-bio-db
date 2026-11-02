@@ -553,6 +553,28 @@ impl SqliteStore {
         Ok(list)
     }
 
+    /// Returns all genes on chromosome `chr` scoped to `tax_id` and `assembly`, ordered by start coordinate.
+    pub fn find_genes_by_chromosome(
+        &self,
+        tax_id: u32,
+        assembly: &str,
+        chr: &str,
+    ) -> Result<Vec<Gene>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT gene_id, assembly_name, symbol, name, biotype, chr, start, end, strand, tax_id
+             FROM genes
+             WHERE tax_id = ?1 AND assembly_name = ?2 AND chr = ?3
+             ORDER BY start",
+        )?;
+        let rows = stmt.query_map(params![tax_id, assembly, chr], Self::row_to_gene)?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
     fn row_to_gene(row: &rusqlite::Row) -> rusqlite::Result<Gene> {
         let biotype_raw: String = row.get(4)?;
         let biotype = match biotype_raw.as_str() {
@@ -768,6 +790,58 @@ impl SqliteStore {
             list.push(r?);
         }
         Ok(list)
+    }
+
+    /// Returns all transcripts on chromosome `chr` within `assembly`, ordered by start coordinate.
+    pub fn find_transcripts_by_chromosome(
+        &self,
+        assembly: &str,
+        chr: &str,
+    ) -> Result<Vec<Transcript>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT transcript_id, gene_id, assembly_name, biotype, chr, start, end, strand, exon_count
+             FROM transcripts WHERE assembly_name = ?1 AND chr = ?2 ORDER BY start",
+        )?;
+        let rows = stmt.query_map(params![assembly, chr], Self::row_to_transcript)?;
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
+    /// Tunes SQLite PRAGMAs for high-throughput bulk insertion (larger cache and memory temp store).
+    pub fn tune_for_bulk_loading(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch(
+            "PRAGMA synchronous = NORMAL;
+             PRAGMA cache_size = -64000;
+             PRAGMA temp_store = MEMORY;",
+        )?;
+        Ok(())
+    }
+
+    /// Restores standard SQLite operational PRAGMAs.
+    pub fn restore_normal_pragmas(&self) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute_batch(
+            "PRAGMA synchronous = NORMAL;
+             PRAGMA cache_size = -2000;
+             PRAGMA temp_store = DEFAULT;",
+        )?;
+        Ok(())
+    }
+
+    /// Executes closure `f` while SQLite PRAGMAs are tuned for high-throughput bulk loading.
+    pub fn with_bulk_mode<F, T>(&self, f: F) -> Result<T>
+    where
+        F: FnOnce() -> Result<T>,
+    {
+        self.tune_for_bulk_loading()?;
+        let res = f();
+        let _ = self.restore_normal_pragmas();
+        res
     }
 
     fn row_to_transcript(row: &rusqlite::Row) -> rusqlite::Result<Transcript> {

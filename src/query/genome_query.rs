@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::index::KmerIndex;
 use crate::model::genome::Chromosome;
 use crate::storage::{SeqStore, SqliteStore};
 use crate::{BioDbError, Result};
@@ -76,5 +77,32 @@ impl GenomeQuery {
     /// Returns metadata for every chromosome in assembly `assembly`.
     pub fn list_chromosomes(&self, assembly: &str) -> Result<Vec<Chromosome>> {
         self.sql_store.list_chromosomes(assembly)
+    }
+
+    /// Builds an in-memory [`KmerIndex`] of length `k` for chromosome `chr`.
+    pub fn build_kmer_index(
+        &self,
+        tax_id: u32,
+        assembly: &str,
+        chr: &str,
+        k: usize,
+    ) -> Result<KmerIndex> {
+        let raw = self.fetch_full_raw_sequence(tax_id, assembly, chr)?;
+        let mut index = KmerIndex::new(k);
+        index.index_sequence(chr, &raw);
+        Ok(index)
+    }
+
+    /// Computes the Jaccard k-mer similarity between chromosome `chr` and `query_sequence`.
+    pub fn estimate_similarity(
+        &self,
+        tax_id: u32,
+        assembly: &str,
+        chr: &str,
+        query_sequence: &[u8],
+        k: usize,
+    ) -> Result<f64> {
+        let index = self.build_kmer_index(tax_id, assembly, chr, k)?;
+        Ok(index.jaccard_similarity(query_sequence))
     }
 }

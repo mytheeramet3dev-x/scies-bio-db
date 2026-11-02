@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::index::IntervalIndex;
 use crate::model::gene::{Gene, Transcript};
 use crate::storage::SqliteStore;
 use crate::{BioDbError, Result};
@@ -82,5 +83,32 @@ impl GeneQuery {
     pub fn transcripts_of_scoped(&self, gene_id: &str, assembly: &str) -> Result<Vec<Transcript>> {
         self.sql_store
             .find_transcripts_by_gene_scoped(gene_id, assembly)
+    }
+
+    /// Builds an in-memory [`IntervalIndex`] of all genes on chromosome `chr` in assembly `assembly` for organism `tax_id`.
+    ///
+    /// Allows ultra-fast microsecond interval overlap queries in memory without contacting SQLite.
+    pub fn build_chromosome_interval_index(
+        &self,
+        tax_id: u32,
+        assembly: &str,
+        chr: &str,
+    ) -> Result<IntervalIndex> {
+        let genes = self
+            .sql_store
+            .find_genes_by_chromosome(tax_id, assembly, chr)?;
+        Ok(IntervalIndex::from_genes(&genes))
+    }
+
+    /// Builds an in-memory [`IntervalIndex`] of all transcripts on chromosome `chr` within `assembly`.
+    pub fn build_transcript_interval_index(
+        &self,
+        assembly: &str,
+        chr: &str,
+    ) -> Result<IntervalIndex> {
+        let transcripts = self
+            .sql_store
+            .find_transcripts_by_chromosome(assembly, chr)?;
+        Ok(IntervalIndex::from_transcripts(&transcripts))
     }
 }

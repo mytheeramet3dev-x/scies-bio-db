@@ -4,4 +4,4 @@ pub mod interval_idx;
 pub mod kmer_idx;
 
 pub use interval_idx::{IndexEntry, IntervalIndex};
-pub use kmer_idx::KmerIndex;
+pub use kmer_idx::{KmerHit, KmerIndex};
