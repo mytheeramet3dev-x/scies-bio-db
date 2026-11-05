@@ -1359,6 +1359,16 @@ mod tests {
 
         let verify_result = db.verify_sequence_integrity(9606, "T2T-CHM13v2.0", "chr5");
         assert!(verify_result.is_err(), "Corrupted sequence file must fail verification");
+
+        // 7. Re-ingest updated sequence -> hash updates and integrity passes
+        db.clear_cache();
+        let new_fa_path = dir.path().join("chr5_v2.fasta");
+        std::fs::write(&new_fa_path, b">chr5\nACGTACGTACGT\n").unwrap();
+        db.ingest_fasta(&new_fa_path, 9606, "T2T-CHM13v2.0").unwrap();
+        let sref_v2 = db.get_sequence_ref(9606, "T2T-CHM13v2.0", "chr5").unwrap().unwrap();
+        assert_ne!(sref_v2.sha256, sref5.sha256);
+        assert_eq!(sref_v2.length_bp, 12);
+        assert!(db.verify_sequence_integrity(9606, "T2T-CHM13v2.0", "chr5").unwrap());
     }
 
     #[test]
