@@ -1,0 +1,12 @@
+##gff-version 3
+#!genome-build T2T-CHM13v2.0
+chr5	HAVANA	gene	1294801	1295600	.	+	.	ID=gene:ENSG00000164362;gene_name=TERT;biotype=protein_coding;description=telomerase reverse transcriptase
+chr5	HAVANA	mRNA	1294801	1295600	.	+	.	ID=transcript:ENST00000310581;Parent=gene:ENSG00000164362;gene_name=TERT;biotype=protein_coding
+chr5	HAVANA	exon	1294801	1295600	.	+	.	ID=exon:ENSE00001156641;Parent=transcript:ENST00000310581;exon_number=1
+chr19	HAVANA	gene	4182001	4182800	.	+	.	ID=gene:ENSG00000077463;Name=SIRT6;biotype=protein_coding;description=sirtuin 6
+chr19	HAVANA	mRNA	4182001	4182800	.	+	.	ID=transcript:ENST00000262455;Parent=gene:ENSG00000077463;Name=SIRT6;biotype=protein_coding
+chr19	HAVANA	exon	4182001	4182800	.	+	.	ID=exon:ENSE00000953782;Parent=transcript:ENST00000262455;exon_number=1
+chr17	HAVANA	gene	7687001	7688000	.	-	.	ID=gene:ENSG00000141510;gene=TP53;biotype=protein_coding;description=tumor protein p53
+chr17	HAVANA	mRNA	7687001	7688000	.	-	.	ID=transcript:ENST00000269305;Parent=gene:ENSG00000141510;gene=TP53;biotype=protein_coding
+chr17	HAVANA	exon	7687001	7688000	.	-	.	ID=exon:ENSE00001072992;Parent=transcript:ENST00000269305;exon_number=1
+chr1	DUMMY	gene	5000	4000	.	+	.	ID=gene:MALFORMED;gene_name=BADCOORD;biotype=protein_coding

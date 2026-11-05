@@ -1,6 +1,6 @@
 //! GFF3 annotation ingestion pipeline.
 //!
-//! Parses GFF3 records and inserts gene, transcript, and exon rows into the
+//! Parses GFF3 and GTF records and inserts gene, transcript, and exon rows into the
 //! [`SqliteStore`].
 
 use std::collections::HashMap;
@@ -10,12 +10,27 @@ use std::path::Path;
 
 use scies_bio_th::io::gff::GffReader;
 
-use crate::model::gene::{Biotype, Exon, Gene, Transcript, TranscriptBiotype};
-use crate::model::genome::Strand;
+use crate::model::gene::{Biotype, Exon, Gene, GeneFeature, Transcript, TranscriptBiotype};
+use crate::model::genome::{Assembly, Strand};
 use crate::storage::SqliteStore;
 use crate::Result;
 
-/// Ingests genomic feature annotations from GFF3 files into the [`SqliteStore`].
+/// Detailed report of a GFF3 / GTF annotation ingestion (Section 5 DB3).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Gff3IngestReport {
+    /// Number of gene features successfully ingested.
+    pub genes_count: u64,
+    /// Number of transcript features successfully ingested.
+    pub transcripts_count: u64,
+    /// Number of exon features successfully ingested.
+    pub exons_count: u64,
+    /// Number of malformed or incomplete features skipped.
+    pub skipped_count: u64,
+    /// Total features inserted across all types.
+    pub total_inserted: u64,
+}
+
+/// Ingests genomic feature annotations from GFF3 / GTF files into the [`SqliteStore`].
 pub struct Gff3Ingestor;
 
 impl Gff3Ingestor {
@@ -24,7 +39,7 @@ impl Gff3Ingestor {
         Self
     }
 
-    /// Parses `path` as a GFF3 file and inserts all recognised features into `store`
+    /// Parses `path` as a GFF3 / GTF file and inserts all recognised features into `store`
     /// scoped under `tax_id` and `assembly`.
     ///
     /// Converts GFF3 1-based inclusive interval [start, end] into 0-based half-open [start - 1, end).
@@ -37,25 +52,68 @@ impl Gff3Ingestor {
         assembly: &str,
         store: &SqliteStore,
     ) -> Result<u64> {
+        let report = self.ingest_file_report(path, tax_id, assembly, store)?;
+        Ok(report.total_inserted)
+    }
+
+    /// Parses `path` as a GFF3 / GTF file and returns a detailed [`Gff3IngestReport`]
+    /// reporting counts of ingested genes, transcripts, exons, and skipped records.
+    pub fn ingest_file_report(
+        &self,
+        path: &Path,
+        tax_id: u32,
+        assembly: &str,
+        store: &SqliteStore,
+    ) -> Result<Gff3IngestReport> {
         let file = File::open(path)?;
         let reader = BufReader::new(file);
         let gff_reader = GffReader::new(reader);
 
-        let mut inserted_count = 0u64;
+        // Auto-register assembly in SQLite assemblies catalog if not already present
+        let asm = Assembly {
+            tax_id,
+            assembly_name: assembly.to_string(),
+            source: Some(path.to_string_lossy().to_string()),
+            created_at: None,
+            notes: None,
+        };
+        let _ = store.insert_assembly(&asm);
 
+        let mut report = Gff3IngestReport::default();
+
+        let mut gene_features = Vec::new();
         let mut genes = Vec::new();
         let mut transcripts = Vec::new();
         let mut exons = Vec::new();
         let mut transcript_exon_counts: HashMap<String, u32> = HashMap::new();
 
         for item in gff_reader {
-            let record = item?;
+            let record = match item {
+                Ok(r) => r,
+                Err(_) => {
+                    report.skipped_count += 1;
+                    continue;
+                }
+            };
+
+            // Coordinate integrity check: start must be <= end
+            if record.start > record.end {
+                report.skipped_count += 1;
+                continue;
+            }
+
             let ftype = record.feature_type.to_ascii_lowercase();
             let attrs = parse_attributes(&record.attributes);
 
             let strand = match record.strand {
                 scies_bio_th::genome::Strand::Reverse => Strand::Reverse,
                 _ => Strand::Forward,
+            };
+
+            let source_str = if record.source.is_empty() {
+                None
+            } else {
+                Some(record.source.clone())
             };
 
             match ftype.as_str() {
@@ -72,9 +130,12 @@ impl Gff3Ingestor {
                         .unwrap_or(&gene_id)
                         .to_string();
 
+                    // Section 5 DB3: support symbol from gene_name, Name, gene, symbol
                     let symbol = attrs
-                        .get("name")
-                        .or_else(|| attrs.get("gene_name"))
+                        .get("gene_name")
+                        .or_else(|| attrs.get("name"))
+                        .or_else(|| attrs.get("gene"))
+                        .or_else(|| attrs.get("symbol"))
                         .cloned()
                         .unwrap_or_else(|| clean_id.clone());
 
@@ -103,6 +164,19 @@ impl Gff3Ingestor {
                         "rrna" => Biotype::RibosomalRna,
                         other => Biotype::Other(other.to_string()),
                     };
+
+                    gene_features.push(GeneFeature {
+                        tax_id,
+                        assembly_name: assembly.to_string(),
+                        gene_id: clean_id.clone(),
+                        symbol: symbol.clone(),
+                        chrom: record.seqid.clone(),
+                        start_bp: record.start,
+                        end_bp: record.end,
+                        strand,
+                        feature_type: "gene".to_string(),
+                        source: source_str,
+                    });
 
                     genes.push(Gene {
                         gene_id: clean_id,
@@ -205,7 +279,9 @@ impl Gff3Ingestor {
                         exon_number,
                     });
                 }
-                _ => {}
+                _ => {
+                    // Non-target features (e.g. chromosome, region, biological_region)
+                }
             }
         }
 
@@ -221,17 +297,38 @@ impl Gff3Ingestor {
                 .unwrap_or(1);
         }
 
-        // Batch insert into database within atomic transactions for maximum performance
-        inserted_count += genes.len() as u64;
-        store.insert_genes_batch(&genes)?;
+        // Batch insert GeneFeature into genes catalog
+        store.insert_gene_features_batch(&gene_features)?;
+        report.genes_count = gene_features.len() as u64;
 
-        inserted_count += transcripts.len() as u64;
-        store.insert_transcripts_batch(&transcripts)?;
+        // Best-effort batch insert into transcripts and exons tables
+        if let Err(_) = store.insert_transcripts_batch(&transcripts) {
+            // If foreign keys fail for transcripts due to missing parent genes, insert individually
+            for t in &transcripts {
+                if store.insert_transcript(t).is_ok() {
+                    report.transcripts_count += 1;
+                } else {
+                    report.skipped_count += 1;
+                }
+            }
+        } else {
+            report.transcripts_count = transcripts.len() as u64;
+        }
 
-        inserted_count += exons.len() as u64;
-        store.insert_exons_batch(&exons)?;
+        if let Err(_) = store.insert_exons_batch(&exons) {
+            for e in &exons {
+                if store.insert_exon(e).is_ok() {
+                    report.exons_count += 1;
+                } else {
+                    report.skipped_count += 1;
+                }
+            }
+        } else {
+            report.exons_count = exons.len() as u64;
+        }
 
-        Ok(inserted_count)
+        report.total_inserted = report.genes_count + report.transcripts_count + report.exons_count;
+        Ok(report)
     }
 }
 
@@ -241,7 +338,7 @@ impl Default for Gff3Ingestor {
     }
 }
 
-/// Helper to parse GFF3 attribute column (e.g. `ID=gene1;Name=BRCA1`).
+/// Helper to parse GFF3 and GTF attribute columns (e.g. `ID=gene1;Name=BRCA1` or `gene_id "ENSG1"; gene_name "BRCA1";`).
 fn parse_attributes(attrs: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for part in attrs.split(';') {
@@ -250,7 +347,11 @@ fn parse_attributes(attrs: &str) -> HashMap<String, String> {
             continue;
         }
         if let Some((k, v)) = part.split_once('=') {
-            map.insert(k.trim().to_ascii_lowercase(), v.trim().to_string());
+            let val = v.trim().trim_matches('"');
+            map.insert(k.trim().to_ascii_lowercase(), val.to_string());
+        } else if let Some((k, v)) = part.split_once(' ') {
+            let val = v.trim().trim_matches('"');
+            map.insert(k.trim().to_ascii_lowercase(), val.to_string());
         }
     }
     map
@@ -333,5 +434,67 @@ mod tests {
         assert_eq!(transcripts.len(), 1);
         assert_eq!(transcripts[0].transcript_id, "ENST00000269305");
         assert_eq!(transcripts[0].exon_count, 1);
+    }
+
+    #[test]
+    fn test_ingest_mini_genes_gff3_fixture() {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test_mini_genes.db");
+        let store = SqliteStore::open(&db_path).unwrap();
+        store.init_schema().unwrap();
+
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let gff_path = manifest_dir.join("testdata/mini_genes.gff3");
+
+        let ingestor = Gff3Ingestor::new();
+        let rep = ingestor
+            .ingest_file_report(&gff_path, 9606, "T2T-CHM13v2.0", &store)
+            .unwrap();
+
+        assert_eq!(rep.genes_count, 3);
+        assert_eq!(rep.transcripts_count, 3);
+        assert_eq!(rep.exons_count, 3);
+        assert_eq!(rep.skipped_count, 1); // The bad coordinate line (5000 > 4000) was skipped
+        assert_eq!(rep.total_inserted, 9);
+
+        // 1. Check TERT (gene_name=TERT, forward strand)
+        let tert = store
+            .get_gene_feature_by_symbol(9606, "T2T-CHM13v2.0", "TERT")
+            .unwrap()
+            .expect("TERT must be found");
+        assert_eq!(tert.symbol, "TERT");
+        assert_eq!(tert.chrom, "chr5");
+        assert_eq!(tert.start_bp, 1294800);
+        assert_eq!(tert.end_bp, 1295600);
+        assert_eq!(tert.strand, Strand::Forward);
+
+        // 2. Check SIRT6 (Name=SIRT6, forward strand)
+        let sirt6 = store
+            .get_gene_feature_by_symbol(9606, "T2T-CHM13v2.0", "SIRT6")
+            .unwrap()
+            .expect("SIRT6 must be found");
+        assert_eq!(sirt6.symbol, "SIRT6");
+        assert_eq!(sirt6.chrom, "chr19");
+        assert_eq!(sirt6.start_bp, 4182000);
+        assert_eq!(sirt6.end_bp, 4182800);
+        assert_eq!(sirt6.strand, Strand::Forward);
+
+        // 3. Check TP53 (gene=TP53, reverse strand)
+        let tp53 = store
+            .get_gene_feature_by_symbol(9606, "T2T-CHM13v2.0", "TP53")
+            .unwrap()
+            .expect("TP53 must be found");
+        assert_eq!(tp53.symbol, "TP53");
+        assert_eq!(tp53.chrom, "chr17");
+        assert_eq!(tp53.start_bp, 7687000);
+        assert_eq!(tp53.end_bp, 7688000);
+        assert_eq!(tp53.strand, Strand::Reverse);
+
+        // 4. Region query test
+        let in_region = store
+            .list_gene_features_in_region(9606, "T2T-CHM13v2.0", "chr5", 1294000, 1296000)
+            .unwrap();
+        assert_eq!(in_region.len(), 1);
+        assert_eq!(in_region[0].symbol, "TERT");
     }
 }

@@ -13,12 +13,14 @@
 //! - **v1 Legacy Format**:
 //!   - 8-byte length prefix followed by raw 2-bit payload (supported for read-only backward compatibility).
 
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 
-use memmap2::MmapOptions;
+use memmap2::{Mmap, MmapOptions};
 
 use crate::{BioDbError, Result};
 
@@ -74,10 +76,12 @@ pub struct EncodedSeq {
     pub is_rna: bool,
 }
 
-/// On-disk store for 2-bit encoded chromosome sequences.
+/// On-disk store for 2-bit encoded chromosome sequences with verified mmap caching.
 pub struct SeqStore {
     /// Root directory containing taxonomic/assembly `.seq` files.
     dir: PathBuf,
+    /// Cache of CRC32-verified memory-mapped `.seq` files keyed by path.
+    mmap_cache: RwLock<HashMap<PathBuf, Arc<Mmap>>>,
 }
 
 impl SeqStore {
@@ -86,7 +90,15 @@ impl SeqStore {
         std::fs::create_dir_all(dir)?;
         Ok(Self {
             dir: dir.to_owned(),
+            mmap_cache: RwLock::new(HashMap::new()),
         })
+    }
+
+    /// Clears the in-memory verified mmap cache.
+    pub fn clear_cache(&self) {
+        if let Ok(mut guard) = self.mmap_cache.write() {
+            guard.clear();
+        }
     }
 
     /// Returns the root directory path.
@@ -162,27 +174,30 @@ impl SeqStore {
             file.sync_all()?;
         }
 
-        // Atomic rename
+        // Atomic rename and invalidate any stale cached mmap for this path
         std::fs::rename(&temp_path, &path)?;
+        if let Ok(mut cache) = self.mmap_cache.write() {
+            cache.remove(&path);
+        }
         Ok(())
     }
 
-    /// Memory-maps the sequence file and returns decoded bases for the half-open interval `[start, end)`.
-    pub fn fetch(
-        &self,
-        tax_id: u32,
-        assembly: &str,
-        chr: &str,
-        start: u64,
-        end: u64,
-    ) -> Result<Vec<u8>> {
-        let path = self.seq_path(tax_id, assembly, chr)?;
+    /// Retrieves a verified `Arc<Mmap>` from cache, or maps and validates the file on first access.
+    fn get_or_map_verified(&self, path: &Path, chr: &str) -> Result<(Arc<Mmap>, bool)> {
+        if let Ok(cache) = self.mmap_cache.read() {
+            if let Some(existing) = cache.get(path) {
+                return Ok((Arc::clone(existing), true));
+            }
+        }
+
         if !path.exists() {
             return Err(BioDbError::NotFound(format!(
-                "sequence file not found for tax_id {tax_id}, assembly {assembly}, chromosome {chr}"
+                "sequence file not found for chromosome {chr} at {}",
+                path.display()
             )));
         }
-        let file = File::open(&path)?;
+
+        let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
         if mmap.len() < 8 {
@@ -192,8 +207,34 @@ impl SeqStore {
             )));
         }
 
+        // Perform full header & CRC32 integrity validation before inserting into cache
         if mmap.starts_with(SEQ_V2_MAGIC) {
-            Self::fetch_v2(&mmap, chr, start, end)
+            Self::validate_v2_integrity(&mmap, chr)?;
+        }
+
+        let arc_mmap = Arc::new(mmap);
+        if let Ok(mut cache) = self.mmap_cache.write() {
+            cache.insert(path.to_path_buf(), Arc::clone(&arc_mmap));
+        }
+
+        Ok((arc_mmap, false))
+    }
+
+    /// Memory-maps the sequence file (using the verified mmap cache) and returns decoded bases
+    /// for the half-open interval `[start, end)`.
+    pub fn fetch(
+        &self,
+        tax_id: u32,
+        assembly: &str,
+        chr: &str,
+        start: u64,
+        end: u64,
+    ) -> Result<Vec<u8>> {
+        let path = self.seq_path(tax_id, assembly, chr)?;
+        let (mmap, already_verified) = self.get_or_map_verified(&path, chr)?;
+
+        if mmap.starts_with(SEQ_V2_MAGIC) {
+            Self::fetch_v2(&mmap, chr, start, end, !already_verified)
         } else {
             Self::fetch_v1(&mmap, chr, start, end)
         }
@@ -243,8 +284,8 @@ impl SeqStore {
             .join(format!("{tax_id}/{safe_assembly}/{safe_chr}.seq")))
     }
 
-    /// Decodes a v2 sequence slice with full validation and ambiguity recovery.
-    fn fetch_v2(mmap: &[u8], chr: &str, start: u64, end: u64) -> Result<Vec<u8>> {
+    /// Validates v2 header fields, payload boundaries, and CRC32 checksum.
+    fn validate_v2_integrity(mmap: &[u8], chr: &str) -> Result<(u64, u64, u64, u64)> {
         if mmap.len() < HEADER_SIZE_V2 {
             return Err(BioDbError::CorruptData(format!(
                 "v2 header truncated for {chr}: expected at least {HEADER_SIZE_V2} bytes, got {}",
@@ -263,7 +304,6 @@ impl SeqStore {
         let ambiguity_len = u64::from_le_bytes(mmap[36..44].try_into().unwrap());
         let expected_checksum = u32::from_le_bytes(mmap[44..48].try_into().unwrap());
 
-        // Validate payload boundaries
         let expected_packed = seq_len.div_ceil(4);
         if packed_len != expected_packed {
             return Err(BioDbError::CorruptData(format!(
@@ -290,7 +330,6 @@ impl SeqStore {
             )));
         }
 
-        // Checksum verification
         let payload_slice = &mmap[HEADER_SIZE_V2..total_required as usize];
         let computed_checksum = crc32(payload_slice);
         if computed_checksum != expected_checksum {
@@ -299,6 +338,27 @@ impl SeqStore {
                 found: computed_checksum,
             });
         }
+
+        Ok((seq_len, packed_len, ambiguity_count, ambiguity_len))
+    }
+
+    /// Decodes a v2 sequence slice with ambiguity recovery in O(end - start + log A).
+    fn fetch_v2(
+        mmap: &[u8],
+        chr: &str,
+        start: u64,
+        end: u64,
+        verify_checksum: bool,
+    ) -> Result<Vec<u8>> {
+        let (seq_len, packed_len, ambiguity_count, ambiguity_len) = if verify_checksum {
+            Self::validate_v2_integrity(mmap, chr)?
+        } else {
+            let seq_len = u64::from_le_bytes(mmap[12..20].try_into().unwrap());
+            let packed_len = u64::from_le_bytes(mmap[20..28].try_into().unwrap());
+            let ambiguity_count = u64::from_le_bytes(mmap[28..36].try_into().unwrap());
+            let ambiguity_len = u64::from_le_bytes(mmap[36..44].try_into().unwrap());
+            (seq_len, packed_len, ambiguity_count, ambiguity_len)
+        };
 
         // Coordinate check
         if end > seq_len || start > end {
@@ -597,5 +657,44 @@ mod tests {
 
         let res = store.fetch(9606, "GRCh38", "chr_magic", 0, 4);
         assert!(matches!(res, Err(BioDbError::CorruptData(_))));
+    }
+
+    #[test]
+    fn test_short_and_long_roundtrip_and_path_isolation() {
+        let dir = tempdir().unwrap();
+        let store = SeqStore::new(dir.path()).unwrap();
+
+        // 1. Short DNA round-trip (e.g. 7 bp, not multiple of 4)
+        let short_seq = b"ACGTACG";
+        store.store(9606, "T2T", "chrShort", short_seq).unwrap();
+        let fetched_short = store.fetch(9606, "T2T", "chrShort", 0, 7).unwrap();
+        assert_eq!(&fetched_short, short_seq);
+
+        // 2. Longer DNA round-trip (1024 bp repeating pattern)
+        let mut long_seq = Vec::with_capacity(1024);
+        for i in 0..1024 {
+            long_seq.push(match i % 4 {
+                0 => b'A',
+                1 => b'C',
+                2 => b'G',
+                _ => b'T',
+            });
+        }
+        store.store(9606, "T2T", "chrLong", &long_seq).unwrap();
+        let fetched_long = store.fetch(9606, "T2T", "chrLong", 0, 1024).unwrap();
+        assert_eq!(&fetched_long, &long_seq);
+
+        // Substring window [250, 750)
+        let sub = store.fetch(9606, "T2T", "chrLong", 250, 750).unwrap();
+        assert_eq!(&sub, &long_seq[250..750]);
+
+        // 3. Path isolation: same chr name across different tax_id and assembly
+        store.store(9606, "T2T", "chr1", b"AAAA").unwrap();
+        store.store(9606, "GRCh38", "chr1", b"CCCC").unwrap();
+        store.store(10090, "GRCm39", "chr1", b"GGGG").unwrap();
+
+        assert_eq!(&store.fetch(9606, "T2T", "chr1", 0, 4).unwrap(), b"AAAA");
+        assert_eq!(&store.fetch(9606, "GRCh38", "chr1", 0, 4).unwrap(), b"CCCC");
+        assert_eq!(&store.fetch(10090, "GRCm39", "chr1", 0, 4).unwrap(), b"GGGG");
     }
 }

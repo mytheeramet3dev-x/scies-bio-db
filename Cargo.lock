@@ -247,7 +247,7 @@ dependencies = [
 
 [[package]]
 name = "scies-bio-db"
-version = "0.2.0"
+version = "1.0.0"
 dependencies = [
  "memmap2",
  "rayon",
@@ -260,7 +260,10 @@ dependencies = [
 
 [[package]]
 name = "scies-bio-th"
-version = "0.3.0"
+version = "1.0.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "serde"

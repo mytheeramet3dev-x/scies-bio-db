@@ -20,13 +20,15 @@ pub struct IndexEntry {
     pub payload_id: String,
 }
 
-/// A genomic interval index supporting overlap queries.
+/// A genomic interval index supporting fast overlap queries with running `max_end` pruning.
 ///
 /// Entries must be inserted via [`IntervalIndex::insert`] and the index rebuilt
 /// with [`IntervalIndex::build`] before queries are issued.
 pub struct IntervalIndex {
     /// Sorted interval entries.
     entries: Vec<IndexEntry>,
+    /// Running maximum `end` coordinate within each chromosome block for subtree/prefix pruning.
+    prefix_max_end: Vec<u64>,
 }
 
 impl IntervalIndex {
@@ -34,6 +36,7 @@ impl IntervalIndex {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
+            prefix_max_end: Vec::new(),
         }
     }
 
@@ -45,10 +48,29 @@ impl IntervalIndex {
         self.entries.push(entry);
     }
 
-    /// Sorts all entries by `(chr, start)` to enable binary-search lookups.
+    /// Sorts all entries by `(chr, start, end)` and computes running `max_end` bounds per chromosome.
     pub fn build(&mut self) {
-        self.entries
-            .sort_unstable_by(|a, b| a.chr.cmp(&b.chr).then(a.start.cmp(&b.start)));
+        self.entries.sort_unstable_by(|a, b| {
+            a.chr
+                .cmp(&b.chr)
+                .then(a.start.cmp(&b.start))
+                .then(a.end.cmp(&b.end))
+        });
+
+        self.prefix_max_end.clear();
+        self.prefix_max_end.reserve(self.entries.len());
+
+        let mut current_chr: Option<&str> = None;
+        let mut current_max = 0u64;
+        for entry in &self.entries {
+            if current_chr != Some(entry.chr.as_str()) {
+                current_chr = Some(entry.chr.as_str());
+                current_max = entry.end;
+            } else if entry.end > current_max {
+                current_max = entry.end;
+            }
+            self.prefix_max_end.push(current_max);
+        }
     }
 
     /// Returns the number of entries in the index.
@@ -73,6 +95,7 @@ impl IntervalIndex {
                     payload_id: g.gene_id.clone(),
                 })
                 .collect(),
+            prefix_max_end: Vec::new(),
         };
         index.build();
         index
@@ -90,6 +113,7 @@ impl IntervalIndex {
                     payload_id: t.transcript_id.clone(),
                 })
                 .collect(),
+            prefix_max_end: Vec::new(),
         };
         index.build();
         index
@@ -98,22 +122,28 @@ impl IntervalIndex {
     /// Returns all entries whose interval `[entry.start, entry.end)` overlaps
     /// the query interval `[start, end)` on chromosome `chr`.
     ///
-    /// # Panics
-    ///
-    /// Does not panic; returns an empty vector when no entries overlap.
+    /// Uses binary search over `prefix_max_end` to skip non-overlapping prefix blocks in $O(\log N)$.
     pub fn find_overlapping(&self, chr: &str, start: u64, end: u64) -> Vec<&IndexEntry> {
-        // Binary search to find the first entry belonging to `chr`
         let chr_start = self.entries.partition_point(|e| e.chr.as_str() < chr);
-        let mut result = Vec::new();
+        let chr_end = self.entries.partition_point(|e| e.chr.as_str() <= chr);
+        if chr_start >= chr_end {
+            return Vec::new();
+        }
 
-        for entry in &self.entries[chr_start..] {
-            if entry.chr.as_str() != chr {
-                break; // Reached next chromosome in sorted list
-            }
+        // Binary search within [chr_start..chr_end] for the first index where prefix_max_end > start
+        let scan_start = if self.prefix_max_end.len() == self.entries.len() {
+            let offset = self.prefix_max_end[chr_start..chr_end]
+                .partition_point(|&max_e| max_e <= start);
+            chr_start + offset
+        } else {
+            chr_start
+        };
+
+        let mut result = Vec::new();
+        for entry in &self.entries[scan_start..chr_end] {
             if entry.start >= end {
                 break; // Sorted by start: all subsequent entries start at or after query end
             }
-            // Overlap condition: entry.start < end (checked above) AND entry.end > start
             if entry.end > start {
                 result.push(entry);
             }

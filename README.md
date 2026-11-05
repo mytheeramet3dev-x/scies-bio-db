@@ -7,25 +7,23 @@
 
 > A high-performance hybrid biological database and sequence storage engine for the SCIES ecosystem.
 
-`scies-bio-db` combines compact memory-mapped biological sequence storage with an embedded SQLite metadata catalog. Version 0.2 hardens the original architecture around lossless sequence preservation, corruption detection, atomic persistence, and species/assembly-scoped biological queries.
+`scies-bio-db` combines compact memory-mapped 2-bit biological sequence storage with an embedded SQLite metadata catalog. Version 0.2 hardens the architecture around lossless sequence preservation, SHA-256 cryptographic provenance, annotation ingestion, and curated longevity intervention loci for downstream simulation in `scies-bio-th` and `Humanz`.
 
-## v0.2 highlights
+## Highlights
 
-- `.seq v2` with `SCIESSEQ` magic, versioned 64-byte header, payload lengths and CRC32 integrity checking.
-- Lossless IUPAC ambiguity preservation using a compact sidecar while retaining 2-bit A/C/G/T storage.
-- Read-only compatibility with legacy `.seq v1` files.
-- Atomic sequence writes using a temporary file, flush/sync and rename.
-- Validation for truncated/corrupt sequence files and unsupported format versions.
-- Path-component validation for assembly and chromosome identifiers.
-- Assembly/species-scoped gene and variant queries.
-- FASTA, GFF3 and VCF ingestion APIs with metadata integration.
-- SQLite catalog for taxonomy, assemblies, reference sequences, genes, transcripts, exons, proteins and variants.
+- **`.seq v2` Storage Format**: `SCIESSEQ` magic, versioned 64-byte header, CRC32 integrity checking, and lossless IUPAC sidecars preserving degenerate symbols and Uracil.
+- **Cryptographic Provenance**: Every ingested reference sequence and assembly computes and records its SHA-256 hash in SQLite (`BioDb::verify_sequence_integrity`).
+- **Annotation Pipeline**: Ingests GFF3 and GTF annotations with diagnostics (`Gff3IngestReport`), attribute resolution (`gene_name`, `Name`, `gene`, `symbol`), and malformed coordinate validation.
+- **Longevity Target Catalog**: Curated database table seeded with 10 essential human longevity genes: `TERT`, `TERC`, `SIRT6`, `FOXO3`, `TP53`, `LMNA`, `CDKN2A`, `ATM`, `PARP1`, `KLOTHO`.
+- **Typed LongevityLocus Extraction**: Retrieves full locus structures (`LongevityLocus`) combining `GeneFeature`, `scies_bio_th::Dna` sequence slices, window coordinates, and provenance hashes.
+- **Downstream Ready**: Feeds directly into `scies-bio-th` CRISPR guide design and `Humanz` genome architecture simulation.
+- **Path Isolation & Atomic Writes**: Atomic temporary file renames and strict traversal protection across assembly and sequence paths.
 
 ## Architecture
 
 ```text
                          BioDb public API
-                               │
+                                │
                  ┌─────────────┴─────────────┐
                  ▼                           ▼
           SeqStore (.seq v2)          SqliteStore
@@ -34,22 +32,26 @@
        ┌─────────┴─────────┐       ┌─────────┴──────────┐
        ▼                   ▼       ▼                    ▼
   2-bit payload      IUPAC sidecar taxonomy       annotations
-  + CRC32            + v1 reader   assemblies      variants/proteins
+  + CRC32            + v1 reader   assemblies      longevity_targets
+                                   provenance      genes / transcripts
 ```
 
-Sequence files remain partitioned by taxonomy and assembly:
+Sequence files are partitioned by taxonomy and assembly:
 
 ```text
 my_biodb/
 ├── meta.db
 └── seq/
     └── 9606/
-        └── GRCh38.p14/
-            ├── chr1.seq
-            └── chr2.seq
+        └── T2T-CHM13v2.0/
+            ├── chr5.seq
+            ├── chr17.seq
+            └── chr19.seq
 ```
 
-## Quick start
+## Quick Start
+
+### 1. Ingest Reference Sequences and Annotations
 
 ```rust
 use scies_bio_db::BioDb;
@@ -58,50 +60,63 @@ use std::path::Path;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = BioDb::open(Path::new("./my_biodb"))?;
 
-    // IUPAC symbols are preserved by .seq v2.
-    let dna = b"ACGTNNRYACGT";
-    db.store_sequence(9606, "GRCh38", "chr21", dna)?;
+    // Ingest FASTA with cryptographic SHA-256 provenance
+    db.ingest_fasta_with_uri(
+        Path::new("chr5.fasta"),
+        9606,
+        "T2T-CHM13v2.0",
+        Some("https://api.ncbi.nlm.nih.gov/genomes/T2T-CHM13v2.0/chr5.fa"),
+    )?;
 
-    let slice = db.fetch_sequence(9606, "GRCh38", "chr21", 0, dna.len() as u64)?;
-    assert_eq!(slice, dna);
+    // Ingest GFF3 annotations
+    let report = db.ingest_gff3_report(Path::new("genes.gff3"), 9606, "T2T-CHM13v2.0")?;
+    println!("Ingested {} genes", report.genes_count);
+
+    // Query gene by symbol
+    let tert_gene = db.get_gene_by_symbol(9606, "T2T-CHM13v2.0", "TERT")?;
+    println!("TERT location: {}:{}-{}", tert_gene.chrom, tert_gene.start_bp, tert_gene.end_bp);
+
+    // Query longevity targets
+    let targets = db.list_longevity_targets(9606)?;
+    for t in targets {
+        println!("{}: prio {} [{}]", t.symbol, t.priority, t.category);
+    }
+
+    // Extract typed LongevityLocus
+    let locus = db.get_longevity_locus(9606, "T2T-CHM13v2.0", "TERT")?;
+    println!("Extracted {} bp with provenance hash {}", locus.len(), locus.provenance_sha256);
 
     Ok(())
 }
 ```
 
-## Coordinate convention
+### 2. Run the Longevity Query Example
 
-SCIES internal genomic intervals use **0-based half-open coordinates**: `[start, end)`. Importers are responsible for converting source conventions such as GFF3/VCF into the internal representation.
+```bash
+cargo run --release --example ingest_and_query_longevity
+```
 
-## Storage integrity
+## Coordinate Convention
 
-A v2 sequence file contains a 64-byte header followed by a packed canonical sequence and a sorted ambiguity sidecar. The reader validates version, lengths, coordinate bounds and CRC32 before returning decoded data. Legacy v1 files remain readable but cannot recover ambiguous bases that were already lost by the old encoder.
+SCIES internal genomic intervals use **0-based half-open coordinates**: `[start, end)`. Importers automatically convert source 1-based inclusive conventions from GFF3 and VCF into the internal 0-based representation.
 
-See [`docs/FORMAT_SPEC.md`](docs/FORMAT_SPEC.md) for the binary layout and [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md) for API details.
+## Storage Integrity & Verification
+
+A `.seq v2` file contains a 64-byte header followed by packed canonical 2-bit nucleotides and a sorted ambiguity sidecar. The reader verifies version, lengths, coordinate bounds and CRC32 before decoding. Additionally, `db.verify_sequence_integrity(tax_id, assembly, seq_id)` validates the on-disk sequence payload against its SQLite SHA-256 catalog hash.
 
 ## Development
 
 Run the test suite:
 
 ```bash
-cargo test
+cargo test --release
 ```
 
-Run Clippy with warnings denied:
+Check all targets:
 
 ```bash
-cargo clippy --all-targets --all-features -- -D warnings
+cargo check --release --all-targets
 ```
-
-Format check:
-
-```bash
-cargo fmt --all -- --check
-```
-
-## Status
-
-Version 0.2 focuses on correctness and integrity. Performance work such as persistent mmap caching, zero-allocation sequence views, broader connection pooling, and chromosome-scale benchmarking remains suitable for later releases after correctness invariants are locked down.
 
 ## License
 

@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Assembly status according to NCBI / INSDC classifications.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AssemblyStatus {
     /// Primary reference assembly.
     Primary,
@@ -14,7 +14,7 @@ pub enum AssemblyStatus {
 }
 
 /// Strand orientation of a genomic feature.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Strand {
     /// Watson (plus, 5′→3′) strand.
     Forward,
@@ -46,6 +46,40 @@ pub struct Chromosome {
     pub assembly_name: String,
     /// `true` for the mitochondrial chromosome.
     pub is_mitochondrial: bool,
+}
+
+/// Reference genome assembly metadata record (Section 4.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Assembly {
+    /// NCBI Taxonomy ID (e.g. 9606 for human).
+    pub tax_id: u32,
+    /// Assembly identifier (e.g. "T2T-CHM13v2.0" or "GRCh38").
+    pub assembly_name: String,
+    /// Source organization / provenance (e.g. "T2T-Consortium", "NCBI", "UCSC").
+    pub source: Option<String>,
+    /// Creation or ingestion timestamp (ISO 8601).
+    pub created_at: Option<String>,
+    /// Optional annotations or release notes.
+    pub notes: Option<String>,
+}
+
+/// Metadata record and provenance for an ingested sequence (Section 4.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SequenceRef {
+    /// NCBI Taxonomy ID.
+    pub tax_id: u32,
+    /// Assembly identifier.
+    pub assembly_name: String,
+    /// Sequence or chromosome identifier (e.g. "chr5", "chr17").
+    pub seq_id: String,
+    /// Sequence length in base-pairs.
+    pub length_bp: u64,
+    /// Relative path to the 2-bit encoded sequence file on disk.
+    pub path: String,
+    /// Cryptographic SHA-256 hex digest of the raw sequence payload.
+    pub sha256: String,
+    /// Source URI or file path where this sequence was ingested from.
+    pub source_uri: Option<String>,
 }
 
 impl Chromosome {

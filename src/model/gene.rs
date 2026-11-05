@@ -132,3 +132,45 @@ pub struct UtrRegion {
     /// `true` for 5′-UTR; `false` for 3′-UTR.
     pub is_five_prime: bool,
 }
+
+/// A standardized gene / genomic feature record (Section 4.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GeneFeature {
+    /// NCBI Taxonomy ID of the host organism.
+    pub tax_id: u32,
+    /// Reference genome assembly name (e.g. "T2T-CHM13v2.0" or "GRCh38").
+    pub assembly_name: String,
+    /// Stable feature or gene identifier (e.g. "ENSG00000164362", "gene-TERT").
+    pub gene_id: String,
+    /// Gene symbol or name (e.g. "TERT", "SIRT6", "TP53").
+    pub symbol: String,
+    /// Chromosome / sequence name (e.g. "chr5", "chr17").
+    pub chrom: String,
+    /// 0-based inclusive start coordinate in base-pairs.
+    pub start_bp: u64,
+    /// 0-based exclusive end coordinate in base-pairs.
+    pub end_bp: u64,
+    /// Strand orientation (Forward or Reverse).
+    pub strand: super::genome::Strand,
+    /// Type of genomic feature ("gene", "transcript", "exon", etc.).
+    pub feature_type: String,
+    /// Data source or provider (e.g. "Ensembl", "RefSeq", "GFF3").
+    pub source: Option<String>,
+}
+
+impl From<Gene> for GeneFeature {
+    fn from(g: Gene) -> Self {
+        Self {
+            tax_id: g.tax_id,
+            assembly_name: g.assembly_name,
+            gene_id: g.gene_id,
+            symbol: g.symbol,
+            chrom: g.chr,
+            start_bp: g.start,
+            end_bp: g.end,
+            strand: g.strand,
+            feature_type: "gene".to_string(),
+            source: None,
+        }
+    }
+}

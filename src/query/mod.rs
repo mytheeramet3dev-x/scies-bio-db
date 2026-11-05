@@ -6,6 +6,6 @@ pub mod protein_query;
 pub mod variant_query;
 
 pub use gene_query::GeneQuery;
-pub use genome_query::GenomeQuery;
+pub use genome_query::{AssemblyOffTargetReport, CrisprOffTargetHit, GenomeQuery};
 pub use protein_query::ProteinQuery;
 pub use variant_query::VariantQuery;

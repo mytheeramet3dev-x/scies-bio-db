@@ -24,5 +24,7 @@ pub mod storage;
 
 pub use api::BioDb;
 pub use error::{BioDbError, Result};
-pub use index::{IndexEntry, IntervalIndex, KmerHit, KmerIndex};
-pub use ingest::{BulkLoadReport, BulkLoader, GenomePackage};
+pub use index::{FmIndex, IndexEntry, IntervalIndex, KmerHit, KmerIndex, MultiChromFmIndex};
+pub use ingest::{BulkLoadReport, BulkLoader, GenomePackage, Gff3IngestReport};
+pub use model::{Assembly, GeneFeature, LongevityLocus, LongevityTarget, SequenceRef};
+pub use query::{AssemblyOffTargetReport, CrisprOffTargetHit};
