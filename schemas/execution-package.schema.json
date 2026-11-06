@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scies.example/schemas/execution-package.schema.json",
+  "title": "DNA Synthesizer Execution Package",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "package_id",
+    "job_id",
+    "created_at",
+    "sequence",
+    "capsule",
+    "authorization",
+    "integrity"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "1.0"
+    },
+    "package_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "job_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sequence": {
+      "$ref": "synthesis-sequence.schema.json"
+    },
+    "capsule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capsule_id",
+        "capsule_type"
+      ],
+      "properties": {
+        "capsule_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "capsule_type": {
+          "const": "output"
+        }
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "approval_status",
+        "authorization_id",
+        "screening_reference",
+        "technical_review_reference"
+      ],
+      "properties": {
+        "approval_status": {
+          "const": "approved"
+        },
+        "authorization_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "screening_reference": {
+          "type": "string",
+          "minLength": 1
+        },
+        "technical_review_reference": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "integrity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "sequence_sha256",
+        "manifest_sha256"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "SHA-256"
+        },
+        "sequence_sha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "manifest_sha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "signature": {
+          "type": "string",
+          "minLength": 1
+        },
+        "signing_key_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  }
+}
