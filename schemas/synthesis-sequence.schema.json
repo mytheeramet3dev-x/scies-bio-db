@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scies.example/schemas/synthesis-sequence.schema.json",
+  "title": "Genome-derived Synthesis Sequence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sequence_id",
+    "sequence_version",
+    "sequence_type",
+    "alphabet",
+    "sequence",
+    "length_bp",
+    "orientation",
+    "sequence_sha256",
+    "genome_source"
+  ],
+  "properties": {
+    "sequence_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sequence_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sequence_type": {
+      "const": "genome_derived_oligo"
+    },
+    "alphabet": {
+      "const": "DNA"
+    },
+    "sequence": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[ACGT]+$"
+    },
+    "length_bp": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "orientation": {
+      "enum": [
+        "forward",
+        "reverse_complement"
+      ]
+    },
+    "sequence_sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    },
+    "genome_source": {
+      "$ref": "genome-source.schema.json"
+    }
+  }
+}
