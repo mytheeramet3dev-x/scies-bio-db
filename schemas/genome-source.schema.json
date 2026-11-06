@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://scies.example/schemas/genome-source.schema.json",
+  "title": "Genome Reference Source",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source_id",
+    "tax_id",
+    "assembly_name",
+    "seq_id",
+    "contig_length_bp",
+    "start",
+    "end",
+    "coordinate_system",
+    "strand",
+    "source_sha256"
+  ],
+  "properties": {
+    "source_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "tax_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "assembly_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "seq_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "contig_length_bp": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "start": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "end": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "coordinate_system": {
+      "const": "0-based-half-open"
+    },
+    "source_coordinate_system": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source_start": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "source_end": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "strand": {
+      "enum": [
+        "+",
+        "-"
+      ]
+    },
+    "source_sha256": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{64}$"
+    }
+  }
+}
